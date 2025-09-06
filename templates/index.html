@@ -461,6 +461,42 @@
 
   <form id="stop-form" action="/stop" method="POST" style="display: none;"></form>
 
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyALVkB5jfl6O0CLNBtGmaX87Kc6UBu2TLE",
+      authDomain: "safai-saathi.firebaseapp.com",
+      projectId: "safai-saathi",
+      storageBucket: "safai-saathi.firebasestorage.app",
+      messagingSenderId: "6015045092",
+      appId: "1:6015045092:web:a31cf2a86330fac60d4bf1",
+      measurementId: "G-ZMM65PNXCL"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    async function saveModelResult(result) {
+      try {
+        const docRef = await addDoc(collection(db, "model_results"), {
+          ...result,
+          createdAt: serverTimestamp()
+        });
+        console.log("Saved to Firestore with ID:", docRef.id);
+        return docRef.id;
+      } catch (error) {
+        console.error("Error saving model result:", error);
+        throw error;
+      }
+    }
+
+    // Make saveModelResult available globally
+    window.saveModelResult = saveModelResult;
+  </script>
+
   <script>
     let selectedFile = null;
     let detectionStats = { count: 0, confidence: 0 };
@@ -671,7 +707,7 @@
       
       fetch('/location_logs')
         .then(response => response.json())
-        .then(data => {
+        .then(async data => {
           if (data.length === 0) {
             document.getElementById('logs-display').innerHTML = 
               '<div style="text-align: center; color: #a0aec0; padding: 20px;"><i class="fas fa-inbox"></i><br>No detections logged yet</div>';
@@ -716,6 +752,25 @@
             // Update stats display
             document.getElementById('detection-count').textContent = detectionStats.count;
             document.getElementById('confidence-avg').textContent = detectionStats.confidence.toFixed(1) + '%';
+
+            // Auto-save latest detection data to Firebase if there are new logs
+            if (data.length > 0 && window.saveModelResult) {
+              try {
+                const latestLog = data[data.length - 1];
+                const detectionData = {
+                  type: 'detection_log',
+                  timestamp: latestLog.timestamp,
+                  detection_count: latestLog.detection_count,
+                  confidence_scores: latestLog.confidence_scores,
+                  location: latestLog.location,
+                  source: 'auto_save'
+                };
+                await window.saveModelResult(detectionData);
+                console.log("Auto-saved latest detection to Firebase");
+              } catch (error) {
+                console.error("Error auto-saving detection to Firebase:", error);
+              }
+            }
           }
         })
         .catch(error => {
@@ -728,7 +783,17 @@
     function generateJsonReport() {
       fetch('/json_report')
         .then(response => response.json())
-        .then(data => {
+        .then(async data => {
+          // Save JSON to Firestore
+          try {
+            if (window.saveModelResult) {
+              const docId = await window.saveModelResult(data);
+              console.log("Saved to Firestore with ID:", docId);
+            }
+          } catch (error) {
+            console.error("Error saving to Firestore:", error);
+          }
+
           // Display the JSON report in a modal or new window
           const jsonString = JSON.stringify(data, null, 2);
           
@@ -801,7 +866,7 @@
           
           // Also copy to clipboard
           navigator.clipboard.writeText(jsonString).then(() => {
-            alert('JSON report copied to clipboard!');
+            alert('JSON report copied to clipboard and saved to Firebase!');
           });
         })
         .catch(error => {

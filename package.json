@@ -1,0 +1,22 @@
+{
+  "name": "safai-sathi-model",
+  "version": "1.0.0",
+  "description": "Smart Garbage Detection System with Firebase Integration",
+  "main": "app.py",
+  "scripts": {
+    "start": "python app.py",
+    "install-deps": "pip install -r requirements.txt && npm install"
+  },
+  "dependencies": {
+    "firebase": "^10.7.1"
+  },
+  "keywords": [
+    "garbage-detection",
+    "yolo",
+    "firebase",
+    "flask",
+    "computer-vision"
+  ],
+  "author": "Safai Sathi Team",
+  "license": "MIT"
+}

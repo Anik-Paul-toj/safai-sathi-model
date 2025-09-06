@@ -9,11 +9,35 @@ import json
 from datetime import datetime
 import threading
 import time
+import firebase_admin
+from firebase_admin import credentials, firestore
+import urllib.request
+import urllib.parse
 
 
 # Flask APPLICATION
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
+
+# Initialize Firebase Admin SDK
+try:
+    # Check if Firebase app is already initialized
+    if not firebase_admin._apps:
+        # Initialize Firebase Admin SDK with default credentials
+        # For production, you should use a service account key file
+        firebase_admin.initialize_app()
+    
+    db = firestore.client()
+    print("✅ Firebase Admin SDK initialized successfully")
+except Exception as e:
+    print(f"⚠️  Firebase initialization failed: {e}")
+    print("📝 Note: Terminal reports will not be saved to Firebase")
+    print("💡 To fix this, you need to set up Firebase authentication:")
+    print("   1. Go to Firebase Console > Project Settings > Service Accounts")
+    print("   2. Generate a new private key")
+    print("   3. Set GOOGLE_APPLICATION_CREDENTIALS environment variable")
+    print("   4. Or place the service account key file in the project directory")
+    db = None
 
 # Load the YOLOv8 model (using the trained weights)
 model = YOLO('best.pt')
@@ -38,6 +62,98 @@ json_report_data = {
     },
     "recent_detections": []
 }
+
+# Function to save data to Firebase Firestore using REST API (fallback)
+def save_to_firebase_rest(data, collection_name="model_results"):
+    """Save data to Firebase using REST API as fallback"""
+    try:
+        # Firebase project configuration
+        project_id = "safai-saathi"
+        api_key = "AIzaSyALVkB5jfl6O0CLNBtGmaX87Kc6UBu2TLE"
+        
+        # Add timestamp to the data
+        data_with_timestamp = {
+            **data,
+            "saved_at": datetime.now().isoformat(),
+            "source": "python_backend_rest"
+        }
+        
+        # Firebase REST API endpoint
+        url = f"https://firestore.googleapis.com/v1/projects/{project_id}/databases/(default)/documents/{collection_name}"
+        
+        # Prepare the data for Firestore REST API format
+        firestore_data = {
+            "fields": {}
+        }
+        
+        # Convert Python data to Firestore format
+        for key, value in data_with_timestamp.items():
+            if isinstance(value, str):
+                firestore_data["fields"][key] = {"stringValue": value}
+            elif isinstance(value, (int, float)):
+                firestore_data["fields"][key] = {"doubleValue": value}
+            elif isinstance(value, bool):
+                firestore_data["fields"][key] = {"booleanValue": value}
+            elif isinstance(value, list):
+                firestore_data["fields"][key] = {"arrayValue": {"values": [{"stringValue": str(v)} for v in value]}}
+            elif isinstance(value, dict):
+                # Convert nested dict to mapValue
+                map_value = {"fields": {}}
+                for k, v in value.items():
+                    if isinstance(v, str):
+                        map_value["fields"][k] = {"stringValue": v}
+                    elif isinstance(v, (int, float)):
+                        map_value["fields"][k] = {"doubleValue": v}
+                    else:
+                        map_value["fields"][k] = {"stringValue": str(v)}
+                firestore_data["fields"][key] = {"mapValue": map_value}
+            else:
+                firestore_data["fields"][key] = {"stringValue": str(value)}
+        
+        # Make the request
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(firestore_data).encode('utf-8'),
+            headers={
+                'Content-Type': 'application/json',
+                'X-Goog-Api-Key': api_key
+            }
+        )
+        
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            doc_id = result['name'].split('/')[-1]
+            print(f"✅ Saved to Firebase Firestore (REST API) with ID: {doc_id}")
+            return doc_id
+            
+    except Exception as e:
+        print(f"❌ Error saving to Firebase via REST API: {e}")
+        return None
+
+# Function to save data to Firebase Firestore
+def save_to_firebase(data, collection_name="model_results"):
+    """Save data to Firebase Firestore"""
+    if db is None:
+        print("⚠️  Firebase Admin SDK not available, trying REST API fallback...")
+        return save_to_firebase_rest(data, collection_name)
+    
+    try:
+        # Add timestamp to the data
+        data_with_timestamp = {
+            **data,
+            "saved_at": datetime.now().isoformat(),
+            "source": "python_backend"
+        }
+        
+        # Save to Firestore
+        doc_ref = db.collection(collection_name).add(data_with_timestamp)
+        doc_id = doc_ref[1].id
+        print(f"✅ Saved to Firebase Firestore with ID: {doc_id}")
+        return doc_id
+    except Exception as e:
+        print(f"❌ Error saving to Firebase Admin SDK: {e}")
+        print("🔄 Trying REST API fallback...")
+        return save_to_firebase_rest(data, collection_name)
 
 # Function to generate and print JSON report
 def generate_json_report():
@@ -119,6 +235,14 @@ def generate_json_report():
     print("="*80)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     print("="*80 + "\n")
+    
+    # Save the report to Firebase Firestore
+    print("💾 Saving report to Firebase Firestore...")
+    firebase_doc_id = save_to_firebase(report)
+    if firebase_doc_id:
+        print(f"✅ Report saved to Firebase with document ID: {firebase_doc_id}")
+    else:
+        print("❌ Failed to save report to Firebase")
     
     return report
 
@@ -240,6 +364,16 @@ def log_detection_with_location(detection_count, confidence_scores):
         }
         detection_logs.append(log_entry)
         
+        # Save individual detection to Firebase
+        detection_data = {
+            'type': 'individual_detection',
+            'detection_count': detection_count,
+            'confidence_scores': confidence_scores,
+            'location': location_data,
+            'timestamp': log_entry['timestamp']
+        }
+        save_to_firebase(detection_data, "detection_logs")
+        
         # Keep only the last 100 logs to prevent memory issues
         if len(detection_logs) > 100:
             detection_logs.pop(0)
@@ -252,7 +386,7 @@ def generate(file_path):
         # Use the ngrok URL for mobile phone CCTV
         # Try different possible video stream endpoints
         possible_urls = [
-            "https://0be173065b6e.ngrok-free.app/video",
+            "https://7817590fd801.ngrok-free.app/video",
         ]
         
         cap = None

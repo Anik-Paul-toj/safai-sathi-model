@@ -402,7 +402,7 @@ def generate(file_path):
         # Use the ngrok URL for mobile phone CCTV
         # Try different possible video stream endpoints
         possible_urls = [
-            "https://7817590fd801.ngrok-free.app/video",
+            "https://0d9896f60282.ngrok-free.app/video",
         ]
         
         cap = None

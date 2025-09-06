@@ -170,8 +170,19 @@ def generate_json_report():
         recent_logs = [log for log in detection_logs 
                       if datetime.fromisoformat(log['timestamp']).timestamp() > cutoff_time]
     
+    # Validation: Only generate report if there are actual detections
+    if not recent_logs or len(recent_logs) == 0:
+        print("🔍 No garbage detections in the last 30 seconds - skipping report generation")
+        return None
+    
     # Calculate detection statistics
     total_detections = sum(log['detection_count'] for log in recent_logs)
+    
+    # Additional validation: Ensure we have actual garbage objects detected
+    if total_detections == 0:
+        print("🔍 No garbage objects detected in recent logs - skipping report generation")
+        return None
+    
     all_confidences = []
     for log in recent_logs:
         all_confidences.extend(log['confidence_scores'])
@@ -232,6 +243,7 @@ def generate_json_report():
     # Print the JSON report to console
     print("\n" + "="*80)
     print("🗑️  GARBAGE OVERFLOW DETECTION REPORT")
+    print(f"📊 Total detections in last 30 seconds: {total_detections}")
     print("="*80)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     print("="*80 + "\n")
@@ -248,11 +260,15 @@ def generate_json_report():
 
 # Function to run periodic JSON reports
 def periodic_json_reports():
-    """Run JSON report generation every 30 seconds"""
+    """Run JSON report generation every 30 seconds - only when garbage is detected"""
     while not terminate_flag:
         time.sleep(30)  # Wait 30 seconds
         if not terminate_flag:  # Check again after sleep
-            generate_json_report()
+            report = generate_json_report()
+            if report is None:
+                print("⏱️  30-second interval completed - no garbage detected, no report generated")
+            else:
+                print("✅ Garbage detection report generated successfully")
 
 # Geolocation function using a free IP geolocation service
 def get_location_from_ip(ip_address):
@@ -511,7 +527,15 @@ def gps_status():
 # Route to get current JSON report
 @app.route('/json_report')
 def get_json_report():
-    return jsonify(generate_json_report())
+    """API endpoint to get current JSON report - only if garbage is detected"""
+    report = generate_json_report()
+    if report is None:
+        return jsonify({
+            "message": "No garbage detected in the last 30 seconds",
+            "status": "NO_DETECTIONS",
+            "timestamp": datetime.now().isoformat()
+        }), 200
+    return jsonify(report)
 
 # Define a route to serve the HTML page with the file upload form
 @app.route('/', methods=['GET', 'POST'])

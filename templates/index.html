@@ -313,6 +313,150 @@
       opacity: 0.9;
     }
 
+    /* Civilian Images Gallery Styles */
+    .civilian-images-section {
+      margin-top: 30px;
+    }
+
+    .images-gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 15px;
+      max-height: 400px;
+      overflow-y: auto;
+      padding: 10px;
+    }
+
+    .image-card {
+      background: white;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .image-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    }
+
+    .image-card img {
+      width: 100%;
+      height: 150px;
+      object-fit: cover;
+    }
+
+    .image-card-info {
+      padding: 12px;
+    }
+
+    .image-card-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #2d3748;
+      margin-bottom: 5px;
+    }
+
+    .image-card-meta {
+      font-size: 0.8rem;
+      color: #718096;
+    }
+
+    .image-card-status {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      margin-top: 5px;
+    }
+
+    .status-clean { background: #c6f6d5; color: #22543d; }
+    .status-low { background: #fef5e7; color: #744210; }
+    .status-medium { background: #fed7d7; color: #742a2a; }
+    .status-high { background: #fed7d7; color: #742a2a; }
+
+    /* Modal Styles */
+    .modal {
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-content {
+      background: white;
+      border-radius: 15px;
+      padding: 30px;
+      max-width: 90%;
+      max-height: 90%;
+      overflow: auto;
+      position: relative;
+    }
+
+    .close {
+      position: absolute;
+      top: 15px;
+      right: 20px;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+      color: #ff6b6b;
+    }
+
+    .close:hover {
+      color: #e53e3e;
+    }
+
+    .analysis-result {
+      margin-top: 20px;
+    }
+
+    .analysis-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 15px;
+      margin: 20px 0;
+    }
+
+    .stat-item {
+      background: #f7fafc;
+      padding: 15px;
+      border-radius: 10px;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #2d3748;
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: #718096;
+      margin-top: 5px;
+    }
+
+    .detection-list {
+      margin-top: 20px;
+    }
+
+    .detection-item {
+      background: #f7fafc;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+      border-left: 4px solid #667eea;
+    }
+
     @media (max-width: 768px) {
       .main-content {
         grid-template-columns: 1fr;
@@ -324,6 +468,15 @@
       
       .header h1 {
         font-size: 2rem;
+      }
+
+      .images-gallery {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      }
+
+      .modal-content {
+        margin: 20px;
+        padding: 20px;
       }
     }
   </style>
@@ -442,6 +595,40 @@
         <div id="logs-display" class="logs-container">
           <p style="color: #a0aec0; text-align: center; padding: 20px;">No detections yet</p>
         </div>
+      </div>
+    </div>
+
+    <!-- Civilian Images Section -->
+    <div class="civilian-images-section">
+      <div class="info-panel" style="grid-column: 1 / -1;">
+        <h3>
+          <i class="fas fa-images"></i>
+          Civilian Reported Images
+        </h3>
+        <button class="btn" onclick="loadCivilianImages()" style="font-size: 0.9rem; padding: 8px 16px; margin-bottom: 15px;">
+          <i class="fas fa-sync-alt"></i>
+          Load Civilian Images
+        </button>
+        <button class="btn" onclick="loadCloudinaryImages()" style="font-size: 0.9rem; padding: 8px 16px; margin-bottom: 15px;">
+          <i class="fas fa-cloud"></i>
+          Load Cloudinary Images
+        </button>
+        <button class="btn" onclick="generateAnalysisReport()" style="font-size: 0.9rem; padding: 8px 16px; margin-bottom: 15px;">
+          <i class="fas fa-chart-bar"></i>
+          Generate Analysis Report
+        </button>
+        <div id="civilian-images-display" class="images-gallery">
+          <p style="color: #a0aec0; text-align: center; padding: 20px;">Click "Load Cloudinary Images" to fetch and analyze images</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analysis Results Modal -->
+    <div id="analysis-modal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <span class="close" onclick="closeAnalysisModal()">&times;</span>
+        <h3><i class="fas fa-search"></i> Image Analysis Results</h3>
+        <div id="analysis-results"></div>
       </div>
     </div>
   </div>
@@ -873,6 +1060,300 @@
           console.error('Error generating JSON report:', error);
           alert('Error generating JSON report');
         });
+    }
+
+    // Civilian Images Functions
+    function loadCivilianImages() {
+      document.getElementById('civilian-images-display').innerHTML = '<div class="loading"></div> Loading civilian images...';
+      
+      fetch('/fetch_civilian_images')
+        .then(response => response.json())
+        .then(data => {
+          if (data.success && data.images.length > 0) {
+            displayCivilianImages(data.images);
+          } else {
+            let message = 'No civilian images found';
+            if (data.message) {
+              message = data.message;
+            }
+            document.getElementById('civilian-images-display').innerHTML = 
+              `<div style="text-align: center; color: #a0aec0; padding: 20px;"><i class="fas fa-inbox"></i><br>${message}</div>`;
+          }
+        })
+        .catch(error => {
+          document.getElementById('civilian-images-display').innerHTML = 
+            '<div style="color: #e53e3e; padding: 15px; background: #fed7d7; border-radius: 10px;"><i class="fas fa-exclamation-triangle"></i> Error loading images</div>';
+          console.error('Error:', error);
+        });
+    }
+
+    function loadCloudinaryImages() {
+      document.getElementById('civilian-images-display').innerHTML = '<div class="loading"></div> Loading Cloudinary images...';
+      
+      fetch('/fetch_cloudinary_images')
+        .then(response => response.json())
+        .then(data => {
+          if (data.success && data.images.length > 0) {
+            displayCivilianImages(data.images);
+            console.log(`✅ Loaded ${data.count} images from ${data.source}`);
+          } else {
+            document.getElementById('civilian-images-display').innerHTML = 
+              '<div style="text-align: center; color: #a0aec0; padding: 20px;"><i class="fas fa-inbox"></i><br>No Cloudinary images found</div>';
+          }
+        })
+        .catch(error => {
+          document.getElementById('civilian-images-display').innerHTML = 
+            '<div style="color: #e53e3e; padding: 15px; background: #fed7d7; border-radius: 10px;"><i class="fas fa-exclamation-triangle"></i> Error loading Cloudinary images</div>';
+          console.error('Error:', error);
+        });
+    }
+
+    function displayCivilianImages(images) {
+      let html = '';
+      images.forEach(image => {
+        const timestamp = image.timestamp ? new Date(image.timestamp).toLocaleDateString() : 'Unknown date';
+        const location = image.location ? `${image.location.city || 'Unknown'}, ${image.location.country || 'Unknown'}` : 'Unknown location';
+        
+        html += `
+          <div class="image-card" onclick="analyzeImage('${image.id}', '${image.imageUrl}')">
+            <img src="${image.imageUrl}" alt="Civilian reported image" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjdmYWZjIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iI2EwYWVjMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPkltYWdlIEVycm9yPC90ZXh0Pjwvc3ZnPg=='">
+            <div class="image-card-info">
+              <div class="image-card-title">Reported Image</div>
+              <div class="image-card-meta">
+                <i class="fas fa-calendar"></i> ${timestamp}<br>
+                <i class="fas fa-map-marker-alt"></i> ${location}
+              </div>
+              <div class="image-card-status status-clean">Click to Analyze</div>
+            </div>
+          </div>
+        `;
+      });
+      
+      document.getElementById('civilian-images-display').innerHTML = html;
+    }
+
+    function analyzeImage(imageId, imageUrl) {
+      // Show loading state
+      const modal = document.getElementById('analysis-modal');
+      const resultsDiv = document.getElementById('analysis-results');
+      resultsDiv.innerHTML = '<div class="loading"></div> Analyzing image...';
+      modal.style.display = 'flex';
+      
+      // Send analysis request
+      fetch('/analyze_image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          imageId: imageId,
+          imageUrl: imageUrl
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          displayAnalysisResults(data.analysis);
+        } else {
+          resultsDiv.innerHTML = `<div style="color: #e53e3e; padding: 15px; background: #fed7d7; border-radius: 10px;"><i class="fas fa-exclamation-triangle"></i> Error: ${data.error}</div>`;
+        }
+      })
+      .catch(error => {
+        resultsDiv.innerHTML = `<div style="color: #e53e3e; padding: 15px; background: #fed7d7; border-radius: 10px;"><i class="fas fa-exclamation-triangle"></i> Error analyzing image</div>`;
+        console.error('Error:', error);
+      });
+    }
+
+    function displayAnalysisResults(analysis) {
+      const resultsDiv = document.getElementById('analysis-results');
+      
+      const statusClass = analysis.status.toLowerCase().replace('_', '-');
+      const statusText = analysis.status.replace('_', ' ');
+      
+      let html = `
+        <div class="analysis-result">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <img src="${analysis.imageUrl}" style="max-width: 300px; max-height: 200px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);" alt="Analyzed image">
+          </div>
+          
+          <div class="analysis-stats">
+            <div class="stat-item">
+              <div class="stat-value">${analysis.detection_count}</div>
+              <div class="stat-label">Detections</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value">${(analysis.average_confidence * 100).toFixed(1)}%</div>
+              <div class="stat-label">Avg Confidence</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value">${(analysis.max_confidence * 100).toFixed(1)}%</div>
+              <div class="stat-label">Max Confidence</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value status-${statusClass}">${statusText}</div>
+              <div class="stat-label">Status</div>
+            </div>
+          </div>
+      `;
+      
+      if (analysis.detection_details && analysis.detection_details.length > 0) {
+        html += `
+          <div class="detection-list">
+            <h4><i class="fas fa-list"></i> Detection Details</h4>
+        `;
+        
+        analysis.detection_details.forEach(detection => {
+          html += `
+            <div class="detection-item">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <strong>${detection.class_name}</strong>
+                  <span style="color: #718096; font-size: 0.9rem;">(Class ${detection.class})</span>
+                </div>
+                <div style="background: #667eea; color: white; padding: 4px 8px; border-radius: 12px; font-size: 0.8rem;">
+                  ${(detection.confidence * 100).toFixed(1)}%
+                </div>
+              </div>
+              <div style="margin-top: 8px; font-size: 0.8rem; color: #718096;">
+                Bounding Box: (${detection.bbox.x1.toFixed(0)}, ${detection.bbox.y1.toFixed(0)}) to (${detection.bbox.x2.toFixed(0)}, ${detection.bbox.y2.toFixed(0)})
+              </div>
+            </div>
+          `;
+        });
+        
+        html += `</div>`;
+      } else {
+        html += `
+          <div style="text-align: center; padding: 20px; background: #f0fff4; border-radius: 10px; color: #22543d;">
+            <i class="fas fa-check-circle"></i> No garbage detected - Area appears clean!
+          </div>
+        `;
+      }
+      
+      html += `
+          <div style="margin-top: 20px; padding: 15px; background: #f7fafc; border-radius: 10px;">
+            <div style="font-size: 0.9rem; color: #718096;">
+              <i class="fas fa-clock"></i> Analyzed at: ${new Date(analysis.timestamp).toLocaleString()}
+            </div>
+            <div style="font-size: 0.9rem; color: #718096; margin-top: 5px;">
+              <i class="fas fa-database"></i> ${analysis.saved_to_firebase ? 'Results saved to Firebase' : 'Firebase not available - results not saved'}
+            </div>
+          </div>
+        </div>
+      `;
+      
+      resultsDiv.innerHTML = html;
+    }
+
+    function closeAnalysisModal() {
+      document.getElementById('analysis-modal').style.display = 'none';
+    }
+
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+      const modal = document.getElementById('analysis-modal');
+      if (event.target === modal) {
+        modal.style.display = 'none';
+      }
+    }
+
+    function generateAnalysisReport() {
+      // Show loading state
+      const modal = document.getElementById('analysis-modal');
+      const resultsDiv = document.getElementById('analysis-results');
+      resultsDiv.innerHTML = '<div class="loading"></div> Generating comprehensive analysis report...';
+      modal.style.display = 'flex';
+      
+      // Send report generation request
+      fetch('/generate_analysis_report')
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            displayAnalysisReport(data.report);
+          } else {
+            resultsDiv.innerHTML = `<div style="color: #e53e3e; padding: 15px; background: #fed7d7; border-radius: 10px;"><i class="fas fa-exclamation-triangle"></i> Error: ${data.error}</div>`;
+          }
+        })
+        .catch(error => {
+          resultsDiv.innerHTML = `<div style="color: #e53e3e; padding: 15px; background: #fed7d7; border-radius: 10px;"><i class="fas fa-exclamation-triangle"></i> Error generating report</div>`;
+          console.error('Error:', error);
+        });
+    }
+
+    function displayAnalysisReport(report) {
+      const resultsDiv = document.getElementById('analysis-results');
+      
+      let html = `
+        <div class="analysis-result">
+          <h3><i class="fas fa-chart-bar"></i> Comprehensive Analysis Report</h3>
+          
+          <div class="analysis-stats">
+            <div class="stat-item">
+              <div class="stat-value">${report.summary.total_images_analyzed}</div>
+              <div class="stat-label">Images Analyzed</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value">${report.summary.total_detections}</div>
+              <div class="stat-label">Total Detections</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value">${report.summary.average_detections_per_image}</div>
+              <div class="stat-label">Avg per Image</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value">${(report.summary.average_confidence * 100).toFixed(1)}%</div>
+              <div class="stat-label">Avg Confidence</div>
+            </div>
+          </div>
+
+          <div style="margin: 20px 0;">
+            <h4><i class="fas fa-pie-chart"></i> Status Distribution</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;">
+      `;
+      
+      Object.entries(report.summary.status_distribution).forEach(([status, count]) => {
+        const statusClass = status.toLowerCase().replace('_', '-');
+        const percentage = report.summary.total_images_analyzed > 0 ? 
+          ((count / report.summary.total_images_analyzed) * 100).toFixed(1) : 0;
+        
+        html += `
+          <div style="background: #f7fafc; padding: 15px; border-radius: 10px; text-align: center;">
+            <div style="font-size: 1.5rem; font-weight: 700; color: #2d3748;">${count}</div>
+            <div style="font-size: 0.8rem; color: #718096;">${status.replace('_', ' ')}</div>
+            <div style="font-size: 0.7rem; color: #a0aec0;">${percentage}%</div>
+          </div>
+        `;
+      });
+      
+      html += `</div></div>`;
+      
+      if (report.recommendations && report.recommendations.length > 0) {
+        html += `
+          <div style="margin: 20px 0;">
+            <h4><i class="fas fa-lightbulb"></i> Recommendations</h4>
+            <div style="background: #f0fff4; padding: 15px; border-radius: 10px; border-left: 4px solid #38a169;">
+        `;
+        
+        report.recommendations.forEach(rec => {
+          html += `<div style="margin: 5px 0; font-size: 0.9rem;">${rec}</div>`;
+        });
+        
+        html += `</div></div>`;
+      }
+      
+      html += `
+          <div style="margin-top: 20px; padding: 15px; background: #f7fafc; border-radius: 10px;">
+            <div style="font-size: 0.9rem; color: #718096;">
+              <i class="fas fa-clock"></i> Report generated at: ${new Date(report.report_timestamp).toLocaleString()}
+            </div>
+            <div style="font-size: 0.9rem; color: #718096; margin-top: 5px;">
+              <i class="fas fa-database"></i> ${report.message ? 'Firebase not available' : 'Report saved to Firebase'}
+            </div>
+          </div>
+        </div>
+      `;
+      
+      resultsDiv.innerHTML = html;
     }
 
     // Load location on page load

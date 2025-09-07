@@ -13,6 +13,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import urllib.request
 import urllib.parse
+import numpy as np
 
 
 # Flask APPLICATION
@@ -512,6 +513,326 @@ def gps_status():
 @app.route('/json_report')
 def get_json_report():
     return jsonify(generate_json_report())
+
+# Route to fetch images from Firestore civilian collection
+@app.route('/fetch_civilian_images')
+def fetch_civilian_images():
+    """Fetch all imageUrl from Firestore civilian collection using REST API"""
+    try:
+        # Use REST API to fetch civilian images
+        project_id = "safai-saathi"
+        api_key = "AIzaSyALVkB5jfl6O0CLNBtGmaX87Kc6UBu2TLE"
+        
+        # Firebase REST API endpoint for civilian collection
+        url = f"https://firestore.googleapis.com/v1/projects/{project_id}/databases/(default)/documents/civilian"
+        
+        # Make the request
+        req = urllib.request.Request(
+            url,
+            headers={
+                'X-Goog-Api-Key': api_key
+            }
+        )
+        
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            
+            images = []
+            if 'documents' in result:
+                for doc in result['documents']:
+                    doc_id = doc['name'].split('/')[-1]
+                    fields = doc.get('fields', {})
+                    
+                    # Extract imageUrl if it exists
+                    if 'imageUrl' in fields:
+                        image_url = fields['imageUrl'].get('stringValue', '')
+                        
+                        # Extract other fields
+                        description = fields.get('description', {}).get('stringValue', '')
+                        timestamp = fields.get('timestamp', {}).get('stringValue', '')
+                        
+                        # Extract location data
+                        location = {}
+                        if 'location' in fields:
+                            location_fields = fields['location'].get('mapValue', {}).get('fields', {})
+                            location = {
+                                'accuracy': location_fields.get('accuracy', {}).get('doubleValue', 0),
+                                'city': location_fields.get('city', {}).get('stringValue', ''),
+                                'country': location_fields.get('country', {}).get('stringValue', ''),
+                                'latitude': location_fields.get('latitude', {}).get('doubleValue', 0),
+                                'longitude': location_fields.get('longitude', {}).get('doubleValue', 0)
+                            }
+                        
+                        images.append({
+                            'id': doc_id,
+                            'imageUrl': image_url,
+                            'timestamp': timestamp,
+                            'location': location,
+                            'description': description
+                        })
+            
+            return jsonify({
+                'success': True,
+                'images': images,
+                'count': len(images),
+                'source': 'firestore_rest_api'
+            })
+        
+    except Exception as e:
+        print(f"❌ Error fetching civilian images via REST API: {e}")
+        # Return empty result instead of error
+        return jsonify({
+            'success': True,
+            'images': [],
+            'count': 0,
+            'message': f'Error fetching civilian images: {str(e)}'
+        })
+
+# Route to fetch images directly from Cloudinary (for testing)
+@app.route('/fetch_cloudinary_images')
+def fetch_cloudinary_images():
+    """Fetch sample images from Cloudinary for testing"""
+    try:
+        # Sample Cloudinary URLs for testing
+        sample_images = [
+            {
+                'id': 'cloudinary_1',
+                'imageUrl': 'https://res.cloudinary.com/dq2oyfftd/image/upload/v1757212466/safai-citizen/blob_livahy.jpg',
+                'timestamp': datetime.now().isoformat(),
+                'location': {'city': 'Test City', 'country': 'Test Country'},
+                'description': 'Sample garbage detection image 1'
+            },
+            {
+                'id': 'cloudinary_2', 
+                'imageUrl': 'https://res.cloudinary.com/dq2oyfftd/image/upload/v1757212466/safai-citizen/blob_livahy.jpg',
+                'timestamp': datetime.now().isoformat(),
+                'location': {'city': 'Test City', 'country': 'Test Country'},
+                'description': 'Sample garbage detection image 2'
+            },
+            {
+                'id': 'cloudinary_3',
+                'imageUrl': 'https://res.cloudinary.com/dq2oyfftd/image/upload/v1757212466/safai-citizen/blob_livahy.jpg', 
+                'timestamp': datetime.now().isoformat(),
+                'location': {'city': 'Test City', 'country': 'Test Country'},
+                'description': 'Sample garbage detection image 3'
+            }
+        ]
+        
+        return jsonify({
+            'success': True,
+            'images': sample_images,
+            'count': len(sample_images),
+            'source': 'cloudinary_samples'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error fetching Cloudinary images: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Route to analyze a specific image
+@app.route('/analyze_image', methods=['POST'])
+def analyze_image():
+    """Analyze an image from URL using YOLO model"""
+    try:
+        data = request.get_json()
+        image_url = data.get('imageUrl')
+        image_id = data.get('imageId')
+        
+        if not image_url:
+            return jsonify({"error": "No imageUrl provided"}), 400
+        
+        # Download image from URL
+        import urllib.request
+        import numpy as np
+        
+        # Download the image
+        with urllib.request.urlopen(image_url) as response:
+            image_data = response.read()
+        
+        # Convert to OpenCV format
+        nparr = np.frombuffer(image_data, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            return jsonify({"error": "Could not decode image"}), 400
+        
+        # Run YOLO inference
+        results = model(image, verbose=False)
+        
+        # Extract detection information
+        detections = results[0].boxes
+        detection_count = 0
+        confidence_scores = []
+        detection_details = []
+        
+        if detections is not None and len(detections) > 0:
+            detection_count = len(detections)
+            confidence_scores = detections.conf.tolist() if detections.conf is not None else []
+            
+            # Get bounding boxes and classes
+            boxes = detections.xyxy.tolist() if detections.xyxy is not None else []
+            classes = detections.cls.tolist() if detections.cls is not None else []
+            
+            # Create detailed detection information
+            for i, (box, cls, conf) in enumerate(zip(boxes, classes, confidence_scores)):
+                detection_details.append({
+                    'id': i + 1,
+                    'class': int(cls),
+                    'class_name': model.names[int(cls)] if int(cls) in model.names else 'unknown',
+                    'confidence': float(conf),
+                    'bbox': {
+                        'x1': float(box[0]),
+                        'y1': float(box[1]),
+                        'x2': float(box[2]),
+                        'y2': float(box[3])
+                    }
+                })
+        
+        # Calculate statistics
+        avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
+        max_confidence = max(confidence_scores) if confidence_scores else 0.0
+        min_confidence = min(confidence_scores) if confidence_scores else 0.0
+        
+        # Create analysis result
+        analysis_result = {
+            'imageId': image_id,
+            'imageUrl': image_url,
+            'timestamp': datetime.now().isoformat(),
+            'detection_count': detection_count,
+            'confidence_scores': [round(score, 3) for score in confidence_scores],
+            'average_confidence': round(avg_confidence, 3),
+            'max_confidence': round(max_confidence, 3),
+            'min_confidence': round(min_confidence, 3),
+            'detection_details': detection_details,
+            'status': 'HIGH_OVERFLOW' if detection_count > 5 else 'MEDIUM_OVERFLOW' if detection_count > 2 else 'LOW_OVERFLOW' if detection_count > 0 else 'CLEAN'
+        }
+        
+        # Save analysis result to Firebase in a new collection
+        try:
+            save_to_firebase(analysis_result, "cloudinary_analysis_results")
+            analysis_result['saved_to_firebase'] = True
+        except Exception as e:
+            print(f"⚠️ Could not save to Firebase: {e}")
+            analysis_result['saved_to_firebase'] = False
+            analysis_result['firebase_error'] = str(e)
+        
+        return jsonify({
+            'success': True,
+            'analysis': analysis_result
+        })
+        
+    except Exception as e:
+        print(f"❌ Error analyzing image: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Route to generate comprehensive analysis report
+@app.route('/generate_analysis_report')
+def generate_analysis_report():
+    """Generate a comprehensive report of all analyzed images"""
+    try:
+        if db is None:
+            return jsonify({
+                "success": True,
+                "report": {
+                    "report_timestamp": datetime.now().isoformat(),
+                    "summary": {
+                        "total_images_analyzed": 0,
+                        "total_detections": 0,
+                        "average_detections_per_image": 0,
+                        "average_confidence": 0,
+                        "max_confidence": 0,
+                        "min_confidence": 0,
+                        "status_distribution": {'CLEAN': 0, 'LOW_OVERFLOW': 0, 'MEDIUM_OVERFLOW': 0, 'HIGH_OVERFLOW': 0}
+                    },
+                    "detailed_analyses": [],
+                    "recommendations": ["Firebase not initialized - no analysis data available"],
+                    "message": "Firebase not initialized"
+                }
+            })
+        
+        # Query the cloudinary_analysis_results collection
+        results_ref = db.collection('cloudinary_analysis_results')
+        docs = results_ref.stream()
+        
+        analyses = []
+        total_detections = 0
+        total_images = 0
+        confidence_scores = []
+        status_counts = {'CLEAN': 0, 'LOW_OVERFLOW': 0, 'MEDIUM_OVERFLOW': 0, 'HIGH_OVERFLOW': 0}
+        
+        for doc in docs:
+            doc_data = doc.to_dict()
+            analyses.append({
+                'id': doc.id,
+                'imageUrl': doc_data.get('imageUrl', ''),
+                'timestamp': doc_data.get('timestamp', ''),
+                'detection_count': doc_data.get('detection_count', 0),
+                'average_confidence': doc_data.get('average_confidence', 0),
+                'status': doc_data.get('status', 'UNKNOWN'),
+                'detection_details': doc_data.get('detection_details', [])
+            })
+            
+            total_images += 1
+            total_detections += doc_data.get('detection_count', 0)
+            confidence_scores.append(doc_data.get('average_confidence', 0))
+            
+            status = doc_data.get('status', 'UNKNOWN')
+            if status in status_counts:
+                status_counts[status] += 1
+        
+        # Calculate statistics
+        avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
+        max_confidence = max(confidence_scores) if confidence_scores else 0
+        min_confidence = min(confidence_scores) if confidence_scores else 0
+        
+        # Generate comprehensive report
+        report = {
+            'report_timestamp': datetime.now().isoformat(),
+            'summary': {
+                'total_images_analyzed': total_images,
+                'total_detections': total_detections,
+                'average_detections_per_image': round(total_detections / total_images, 2) if total_images > 0 else 0,
+                'average_confidence': round(avg_confidence, 3),
+                'max_confidence': round(max_confidence, 3),
+                'min_confidence': round(min_confidence, 3),
+                'status_distribution': status_counts
+            },
+            'detailed_analyses': analyses,
+            'recommendations': generate_recommendations(status_counts, total_images)
+        }
+        
+        # Save the comprehensive report to Firebase
+        save_to_firebase(report, "comprehensive_analysis_reports")
+        
+        return jsonify({
+            'success': True,
+            'report': report
+        })
+        
+    except Exception as e:
+        print(f"❌ Error generating analysis report: {e}")
+        return jsonify({"error": str(e)}), 500
+
+def generate_recommendations(status_counts, total_images):
+    """Generate recommendations based on analysis results"""
+    recommendations = []
+    
+    if status_counts['HIGH_OVERFLOW'] > total_images * 0.3:
+        recommendations.append("🚨 High priority: Multiple areas show high garbage overflow. Immediate cleanup required.")
+    
+    if status_counts['MEDIUM_OVERFLOW'] > total_images * 0.4:
+        recommendations.append("⚠️ Medium priority: Several areas need attention. Schedule cleanup within 24 hours.")
+    
+    if status_counts['LOW_OVERFLOW'] > total_images * 0.5:
+        recommendations.append("📋 Low priority: Some areas show minor garbage accumulation. Regular maintenance recommended.")
+    
+    if status_counts['CLEAN'] > total_images * 0.7:
+        recommendations.append("✅ Good: Most areas are clean. Continue current maintenance schedule.")
+    
+    if not recommendations:
+        recommendations.append("📊 Analysis complete. Review individual results for specific recommendations.")
+    
+    return recommendations
 
 # Define a route to serve the HTML page with the file upload form
 @app.route('/', methods=['GET', 'POST'])

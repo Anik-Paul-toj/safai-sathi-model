@@ -157,7 +157,7 @@ def save_to_firebase(data, collection_name="model_results"):
 
 # Function to generate and print JSON report
 def generate_json_report():
-    """Generate a comprehensive JSON report with all detection data"""
+    """Generate a comprehensive JSON report with all detection data - always returns JSON after 30 seconds"""
     global json_report_data, detection_logs, gps_location
     
     current_time = datetime.now()
@@ -170,19 +170,58 @@ def generate_json_report():
         recent_logs = [log for log in detection_logs 
                       if datetime.fromisoformat(log['timestamp']).timestamp() > cutoff_time]
     
-    # Validation: Only generate report if there are actual detections
-    if not recent_logs or len(recent_logs) == 0:
-        print("🔍 No garbage detections in the last 30 seconds - skipping report generation")
-        return None
-    
     # Calculate detection statistics
-    total_detections = sum(log['detection_count'] for log in recent_logs)
+    total_detections = sum(log['detection_count'] for log in recent_logs) if recent_logs else 0
     
-    # Additional validation: Ensure we have actual garbage objects detected
-    if total_detections == 0:
-        print("🔍 No garbage objects detected in recent logs - skipping report generation")
-        return None
+    # Prepare GPS location data
+    gps_data = None
+    if gps_location:
+        gps_data = {
+            "latitude": gps_location.get('latitude'),
+            "longitude": gps_location.get('longitude'),
+            "accuracy": gps_location.get('accuracy'),
+            "address": gps_location.get('address'),
+            "source": gps_location.get('source', 'GPS'),
+            "timestamp": gps_location.get('timestamp')
+        }
     
+    # Handle case when no garbage is detected
+    if not recent_logs or total_detections == 0:
+        # Use the same structure as detection report but with zero values
+        no_detection_report = {
+            "timestamp": current_time.isoformat(),
+            "gps_location": gps_data,
+            "detection_summary": {
+                "total_detections": 0,
+                "average_confidence": 0.0,
+                "max_confidence": 0.0,
+                "min_confidence": 0.0,
+                "overflow_score": 0.0,
+                "detection_frequency": 0,
+                "status": "NO_DETECTIONS"
+            },
+            "recent_detections": []
+        }
+        
+        # Print the no-detection report
+        print("\n" + "="*80)
+        print("🗑️  GARBAGE OVERFLOW DETECTION REPORT")
+        print("📊 Total detections in last 30 seconds: 0")
+        print("="*80)
+        print(json.dumps(no_detection_report, indent=2, ensure_ascii=False))
+        print("="*80 + "\n")
+        
+        # Save the no-detection report to Firebase
+        print("💾 Saving no-detection report to Firebase Firestore...")
+        firebase_doc_id = save_to_firebase(no_detection_report)
+        if firebase_doc_id:
+            print(f"✅ No-detection report saved to Firebase with document ID: {firebase_doc_id}")
+        else:
+            print("❌ Failed to save no-detection report to Firebase")
+        
+        return no_detection_report
+    
+    # If garbage is detected, calculate full statistics
     all_confidences = []
     for log in recent_logs:
         all_confidences.extend(log['confidence_scores'])
@@ -227,16 +266,17 @@ def generate_json_report():
         detection_entry = {
             "timestamp": log['timestamp'],
             "detection_count": log['detection_count'],
-            "confidence_scores": [round(score * 100, 2) for score in log['confidence_scores']],
-            "average_confidence": round(sum(log['confidence_scores']) / len(log['confidence_scores']) * 100, 2) if log['confidence_scores'] else 0.0,
+            "confidence_scores": [round(score, 4) for score in log['confidence_scores']],
+            "average_confidence": round(sum(log['confidence_scores']) / len(log['confidence_scores']), 4) if log['confidence_scores'] else 0.0,
             "location": {
                 "source": log['location'].get('source', 'IP'),
                 "latitude": log['location'].get('latitude'),
                 "longitude": log['location'].get('longitude'),
-                "city": log['location'].get('city'),
-                "country": log['location'].get('country'),
-                "address": log['location'].get('address')
-            }
+                "accuracy": log['location'].get('accuracy'),
+                "address": log['location'].get('address'),
+                "timestamp": log['location'].get('timestamp')
+            },
+            "working_area": log.get('working_area', 'Unknown')
         }
         report["recent_detections"].append(detection_entry)
     
@@ -260,13 +300,13 @@ def generate_json_report():
 
 # Function to run periodic JSON reports
 def periodic_json_reports():
-    """Run JSON report generation every 30 seconds - only when garbage is detected"""
+    """Run JSON report generation every 30 seconds - always returns JSON (with or without detections)"""
     while not terminate_flag:
         time.sleep(30)  # Wait 30 seconds
         if not terminate_flag:  # Check again after sleep
             report = generate_json_report()
-            if report is None:
-                print("⏱️  30-second interval completed - no garbage detected, no report generated")
+            if report["detection_summary"]["total_detections"] == 0:
+                print("⏱️  30-second interval completed - no garbage detected, returning zero report")
             else:
                 print("✅ Garbage detection report generated successfully")
 
@@ -365,29 +405,60 @@ def log_detection_with_location(detection_count, confidence_scores):
     location_data = None
     
     if gps_location:
-        location_data = gps_location.copy()
-        location_data['source'] = 'GPS'
+        location_data = {
+            'accuracy': gps_location.get('accuracy', 'Unknown'),
+            'address': gps_location.get('address'),
+            'latitude': gps_location.get('latitude'),
+            'longitude': gps_location.get('longitude'),
+            'source': 'GPS',
+            'timestamp': gps_location.get('timestamp')
+        }
     else:
         client_ip = get_client_ip()
-        location_data = get_location_from_ip(client_ip)
+        ip_location = get_location_from_ip(client_ip)
+        if ip_location:
+            location_data = {
+                'accuracy': ip_location.get('accuracy', 'City-level (~10km)'),
+                'address': f"{ip_location.get('city', 'Unknown')}, {ip_location.get('region', 'Unknown')}, {ip_location.get('country', 'Unknown')}",
+                'latitude': ip_location.get('latitude'),
+                'longitude': ip_location.get('longitude'),
+                'source': 'IP',
+                'timestamp': ip_location.get('timestamp')
+            }
     
     if location_data:
+        # Extract working area from address (first part before comma)
+        working_area = "Unknown"
+        if location_data.get('address'):
+            working_area = location_data['address'].split(',')[0].strip()
+        
+        # Create the exact structure you specified
+        detection_data = {
+            'assignedAt': datetime.now().isoformat() + 'Z',
+            'confidence_scores': confidence_scores,
+            'createdAt': datetime.now(),  # Firebase will convert this to timestamp
+            'detection_count': detection_count,
+            'location': location_data,
+            'source': 'auto_save',
+            'staffId': 'aD5OR3uuKciXSgOSHvcn',
+            'timestamp': datetime.now().isoformat(),
+            'type': 'detection_log',
+            'updatedAt': datetime.now().isoformat() + 'Z',
+            'workStatus': 'in_progress',
+            'working_area': working_area
+        }
+        
+        # Store in local logs with simplified structure for periodic reports
         log_entry = {
             'detection_count': detection_count,
             'confidence_scores': confidence_scores,
             'location': location_data,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'working_area': working_area
         }
         detection_logs.append(log_entry)
         
-        # Save individual detection to Firebase
-        detection_data = {
-            'type': 'individual_detection',
-            'detection_count': detection_count,
-            'confidence_scores': confidence_scores,
-            'location': location_data,
-            'timestamp': log_entry['timestamp']
-        }
+        # Save to Firebase with the exact structure you want
         save_to_firebase(detection_data, "detection_logs")
         
         # Keep only the last 100 logs to prevent memory issues
@@ -402,7 +473,7 @@ def generate(file_path):
         # Use the ngrok URL for mobile phone CCTV
         # Try different possible video stream endpoints
         possible_urls = [
-            "https://0d9896f60282.ngrok-free.app/video",
+            "https://fb531866d973.ngrok-free.app/video",
         ]
         
         cap = None
@@ -527,14 +598,8 @@ def gps_status():
 # Route to get current JSON report
 @app.route('/json_report')
 def get_json_report():
-    """API endpoint to get current JSON report - only if garbage is detected"""
+    """API endpoint to get current JSON report - always returns JSON after checking 30-second window"""
     report = generate_json_report()
-    if report is None:
-        return jsonify({
-            "message": "No garbage detected in the last 30 seconds",
-            "status": "NO_DETECTIONS",
-            "timestamp": datetime.now().isoformat()
-        }), 200
     return jsonify(report)
 
 # Define a route to serve the HTML page with the file upload form
@@ -569,7 +634,7 @@ if __name__ == '__main__':
     report_thread.start()
     
     print("🚀 Starting Smart Garbage Detection System...")
-    print("📊 JSON reports will be generated every 30 seconds")
+    print("📊 JSON reports will be generated every 30 seconds (with or without detections)")
     print("🌐 Web interface available at: http://localhost:5000")
     print("📋 Manual JSON report available at: http://localhost:5000/json_report")
     print("="*60)

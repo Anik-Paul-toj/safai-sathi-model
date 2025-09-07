@@ -45,6 +45,9 @@ model = YOLO('best.pt')
 # Flag to indicate if the script should terminate
 terminate_flag = False
 
+# Flag to track if video stream is active
+stream_active = False
+
 # Store detection data with location
 detection_logs = []
 gps_location = None  # Store the latest GPS location
@@ -87,28 +90,37 @@ def save_to_firebase_rest(data, collection_name="model_results"):
         }
         
         # Convert Python data to Firestore format
-        for key, value in data_with_timestamp.items():
+        def convert_to_firestore_value(value):
             if isinstance(value, str):
-                firestore_data["fields"][key] = {"stringValue": value}
+                return {"stringValue": value}
             elif isinstance(value, (int, float)):
-                firestore_data["fields"][key] = {"doubleValue": value}
+                return {"doubleValue": value}
             elif isinstance(value, bool):
-                firestore_data["fields"][key] = {"booleanValue": value}
+                return {"booleanValue": value}
             elif isinstance(value, list):
-                firestore_data["fields"][key] = {"arrayValue": {"values": [{"stringValue": str(v)} for v in value]}}
+                # Handle arrays properly - convert each element recursively
+                array_values = []
+                for item in value:
+                    if isinstance(item, dict):
+                        # Convert dict items to mapValue
+                        map_value = {"fields": {}}
+                        for k, v in item.items():
+                            map_value["fields"][k] = convert_to_firestore_value(v)
+                        array_values.append({"mapValue": map_value})
+                    else:
+                        array_values.append(convert_to_firestore_value(item))
+                return {"arrayValue": {"values": array_values}}
             elif isinstance(value, dict):
-                # Convert nested dict to mapValue
+                # Convert nested dict to mapValue recursively
                 map_value = {"fields": {}}
                 for k, v in value.items():
-                    if isinstance(v, str):
-                        map_value["fields"][k] = {"stringValue": v}
-                    elif isinstance(v, (int, float)):
-                        map_value["fields"][k] = {"doubleValue": v}
-                    else:
-                        map_value["fields"][k] = {"stringValue": str(v)}
-                firestore_data["fields"][key] = {"mapValue": map_value}
+                    map_value["fields"][k] = convert_to_firestore_value(v)
+                return {"mapValue": map_value}
             else:
-                firestore_data["fields"][key] = {"stringValue": str(value)}
+                return {"stringValue": str(value)}
+        
+        for key, value in data_with_timestamp.items():
+            firestore_data["fields"][key] = convert_to_firestore_value(value)
         
         # Make the request
         req = urllib.request.Request(
@@ -187,7 +199,28 @@ def generate_json_report():
     
     # Handle case when no garbage is detected
     if not recent_logs or total_detections == 0:
-        # Use the same structure as detection report but with zero values
+        # Create individual detection log entry for no-detection
+        individual_no_detection = {
+            "confidence_scores": [0, 0],  # Array of zeros for no detection
+            "createdAt": current_time.isoformat(),
+            "detection_count": 0,
+            "location": gps_data,
+            "source": "auto_save",
+            "timestamp": current_time.isoformat(),
+            "type": "detection_log"
+        }
+        
+        # Create individual detection entry for no-detection (same format as regular detections)
+        individual_detection_entry = {
+            "timestamp": current_time.isoformat(),
+            "detection_count": 0,
+            "confidence_scores": [0.0, 0.0],  # Array of zeros for no detection
+            "average_confidence": 0.0,
+            "location": gps_data,
+            "working_area": gps_data.get('address', 'Unknown').split(',')[0].strip() if gps_data and gps_data.get('address') else 'Unknown'
+        }
+        
+        # Create periodic report structure for no-detection
         no_detection_report = {
             "timestamp": current_time.isoformat(),
             "gps_location": gps_data,
@@ -200,7 +233,7 @@ def generate_json_report():
                 "detection_frequency": 0,
                 "status": "NO_DETECTIONS"
             },
-            "recent_detections": []
+            "recent_detections": [individual_detection_entry]
         }
         
         # Print the no-detection report
@@ -211,13 +244,21 @@ def generate_json_report():
         print(json.dumps(no_detection_report, indent=2, ensure_ascii=False))
         print("="*80 + "\n")
         
-        # Save the no-detection report to Firebase
-        print("💾 Saving no-detection report to Firebase Firestore...")
-        firebase_doc_id = save_to_firebase(no_detection_report)
-        if firebase_doc_id:
-            print(f"✅ No-detection report saved to Firebase with document ID: {firebase_doc_id}")
+        # Save individual detection log to detection_logs collection
+        print("💾 Saving individual no-detection log to detection_logs...")
+        detection_doc_id = save_to_firebase(individual_no_detection, "detection_logs")
+        if detection_doc_id:
+            print(f"✅ Individual no-detection log saved to detection_logs with document ID: {detection_doc_id}")
         else:
-            print("❌ Failed to save no-detection report to Firebase")
+            print("❌ Failed to save individual no-detection log to detection_logs")
+        
+        # Save periodic report to model_results collection
+        print("💾 Saving no-detection periodic report to model_results...")
+        model_doc_id = save_to_firebase(no_detection_report, "model_results")
+        if model_doc_id:
+            print(f"✅ No-detection periodic report saved to model_results with document ID: {model_doc_id}")
+        else:
+            print("❌ Failed to save no-detection periodic report to model_results")
         
         return no_detection_report
     
@@ -300,15 +341,17 @@ def generate_json_report():
 
 # Function to run periodic JSON reports
 def periodic_json_reports():
-    """Run JSON report generation every 30 seconds - always returns JSON (with or without detections)"""
+    """Run JSON report generation every 30 seconds - only when stream is active"""
     while not terminate_flag:
         time.sleep(30)  # Wait 30 seconds
-        if not terminate_flag:  # Check again after sleep
+        if not terminate_flag and stream_active:  # Only generate reports when stream is active
             report = generate_json_report()
             if report["detection_summary"]["total_detections"] == 0:
                 print("⏱️  30-second interval completed - no garbage detected, returning zero report")
             else:
                 print("✅ Garbage detection report generated successfully")
+        elif not stream_active:
+            print("📹 Video stream not active - skipping periodic report")
 
 # Geolocation function using a free IP geolocation service
 def get_location_from_ip(ip_address):
@@ -467,27 +510,55 @@ def log_detection_with_location(detection_count, confidence_scores):
 
 # Define a generator function to stream video frames to the web page
 def generate(file_path):
+    global stream_active
+    
     if file_path == "camera":
         cap = cv2.VideoCapture(0)
     elif file_path == "ngrok":
         # Use the ngrok URL for mobile phone CCTV
         # Try different possible video stream endpoints
         possible_urls = [
-            "https://fb531866d973.ngrok-free.app/video",
+            "https://c0ef31145d27.ngrok-free.app/video",
+            "http://localhost:8080/video",  # Local fallback
+            "http://192.168.1.100:8080/video",  # Common local network IP
         ]
         
         cap = None
+        successful_url = None
         for url in possible_urls:
+            print(f"🔄 Trying to connect to: {url}")
             cap = cv2.VideoCapture(url)
             if cap.isOpened():
-                break
+                # Test if we can actually read a frame
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    successful_url = url
+                    print(f"✅ Successfully connected to: {url}")
+                    break
+                else:
+                    cap.release()
+                    cap = None
             else:
-                cap.release()
+                if cap:
+                    cap.release()
+                cap = None
         
         if not cap or not cap.isOpened():
+            print("❌ Failed to connect to any mobile CCTV stream")
+            print("📱 Mobile CCTV Setup Instructions:")
+            print("   1. Install a mobile camera streaming app (e.g., 'IP Webcam' for Android)")
+            print("   2. Start the app and note the streaming URL")
+            print("   3. Update the ngrok URL in the code or use the local network URL")
+            print("   4. Make sure your mobile device and computer are on the same network")
+            stream_active = False
             return
     else:
         cap = cv2.VideoCapture(file_path)
+    
+    # Set stream as active when we successfully open a video source
+    if cap and cap.isOpened():
+        stream_active = True
+        print("📹 Video stream started - periodic reports will now be generated")
     while cap.isOpened():
         # Read a frame from the video file
         success, frame = cap.read()
@@ -498,17 +569,24 @@ def generate(file_path):
 
             # Extract detection information
             detections = results[0].boxes
-            if detections is not None and len(detections) > 0:
-                detection_count = len(detections)
-                confidence_scores = detections.conf.tolist() if detections.conf is not None else []
-                
-                # Log detection with geolocation (every 30 frames to avoid spam)
-                if hasattr(generate, 'frame_count'):
-                    generate.frame_count += 1
+            
+            # Initialize frame counter
+            if hasattr(generate, 'frame_count'):
+                generate.frame_count += 1
+            else:
+                generate.frame_count = 1
+            
+            # Log detection with geolocation (every 30 frames to avoid spam)
+            if generate.frame_count % 30 == 0:  # Log every 30 frames
+                if detections is not None and len(detections) > 0:
+                    # Garbage detected
+                    detection_count = len(detections)
+                    confidence_scores = detections.conf.tolist() if detections.conf is not None else []
+                    log_detection_with_location(detection_count, confidence_scores)
                 else:
-                    generate.frame_count = 1
-                
-                if generate.frame_count % 30 == 0:  # Log every 30 frames
+                    # No garbage detected - log zero detection
+                    detection_count = 0
+                    confidence_scores = [0.0, 0.0]  # Array of zeros for no detection
                     log_detection_with_location(detection_count, confidence_scores)
 
             # Visualize the results on the frame
@@ -525,6 +603,10 @@ def generate(file_path):
         else:
             # Break the loop if the video file capture fails
             break
+    
+    # Set stream as inactive when video stream ends
+    stream_active = False
+    print("📹 Video stream stopped - periodic reports will be paused")
     cap.release()
     os._exit(0)  # Terminate the script when the video stream ends or terminate flag is set
 
@@ -595,17 +677,73 @@ def gps_status():
         'location': gps_location
     })
 
+# Route to test mobile CCTV connection
+@app.route('/test_mobile_cctv')
+def test_mobile_cctv():
+    """Test connection to mobile CCTV stream"""
+    possible_urls = [
+        "https://932a43845154.ngrok-free.app/video",
+        "http://localhost:8080/video",
+        "http://192.168.1.100:8080/video",
+    ]
+    
+    results = []
+    for url in possible_urls:
+        try:
+            cap = cv2.VideoCapture(url)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    results.append({
+                        'url': url,
+                        'status': 'success',
+                        'message': 'Connection successful'
+                    })
+                else:
+                    results.append({
+                        'url': url,
+                        'status': 'failed',
+                        'message': 'Cannot read frames'
+                    })
+                cap.release()
+            else:
+                results.append({
+                    'url': url,
+                    'status': 'failed',
+                    'message': 'Cannot open connection'
+                })
+        except Exception as e:
+            results.append({
+                'url': url,
+                'status': 'error',
+                'message': str(e)
+            })
+    
+    return jsonify({
+        'results': results,
+        'setup_instructions': [
+            "1. Install 'IP Webcam' app on your Android device",
+            "2. Start the app and go to 'Start server'",
+            "3. Note the IP address shown (e.g., 192.168.1.100:8080)",
+            "4. The video stream will be available at http://[IP]:8080/video",
+            "5. Make sure both devices are on the same WiFi network",
+            "6. For external access, use ngrok or similar tunneling service"
+        ]
+    })
+
 # Route to get current JSON report
 @app.route('/json_report')
 def get_json_report():
-    """API endpoint to get current JSON report - always returns JSON after checking 30-second window"""
+    """API endpoint to get current JSON report - only when stream is active"""
+    if not stream_active:
+        return jsonify({"error": "Video stream not active", "message": "Start a video stream to generate reports"})
     report = generate_json_report()
     return jsonify(report)
 
 # Define a route to serve the HTML page with the file upload form
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    global terminate_flag
+    global terminate_flag, stream_active
     if request.method == 'POST':
         if request.form.get("camera") == "true":
             file_path = "camera"
@@ -620,12 +758,15 @@ def index():
         return render_template('index.html', file_path=file_path)
     else:
         terminate_flag = False
+        stream_active = False
         return render_template('index.html')
 
 @app.route('/stop', methods=['POST'])
 def stop():
-    global terminate_flag
+    global terminate_flag, stream_active
     terminate_flag = True
+    stream_active = False
+    print("🛑 Process terminated - all reporting stopped")
     return "Process has been Terminated"
 
 if __name__ == '__main__':

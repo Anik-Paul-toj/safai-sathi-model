@@ -48,6 +48,9 @@ terminate_flag = False
 # Flag to track if video stream is active
 stream_active = False
 
+# Track last detection to prevent duplicates
+last_detection = None
+
 # Store detection data with location
 detection_logs = []
 gps_location = None  # Store the latest GPS location
@@ -518,7 +521,7 @@ def generate(file_path):
         # Use the ngrok URL for mobile phone CCTV
         # Try different possible video stream endpoints
         possible_urls = [
-            "https://c0ef31145d27.ngrok-free.app/video",
+            "https://b35ac7b4e14e.ngrok-free.app/video",
             "http://localhost:8080/video",  # Local fallback
             "http://192.168.1.100:8080/video",  # Common local network IP
         ]
@@ -558,6 +561,7 @@ def generate(file_path):
     # Set stream as active when we successfully open a video source
     if cap and cap.isOpened():
         stream_active = True
+        last_detection = None  # Reset detection tracking for new stream
         print("📹 Video stream started - periodic reports will now be generated")
     while cap.isOpened():
         # Read a frame from the video file
@@ -582,12 +586,24 @@ def generate(file_path):
                     # Garbage detected
                     detection_count = len(detections)
                     confidence_scores = detections.conf.tolist() if detections.conf is not None else []
-                    log_detection_with_location(detection_count, confidence_scores)
                 else:
                     # No garbage detected - log zero detection
                     detection_count = 0
                     confidence_scores = [0.0, 0.0]  # Array of zeros for no detection
+                
+                # Check if this detection is different from the last one
+                current_detection = {
+                    'detection_count': detection_count,
+                    'confidence_scores': confidence_scores
+                }
+                
+                # Only log if detection is different from last detection
+                if last_detection != current_detection:
                     log_detection_with_location(detection_count, confidence_scores)
+                    last_detection = current_detection
+                    print(f"🔄 New detection logged: {detection_count} objects, confidence: {confidence_scores}")
+                else:
+                    print(f"⏭️  Skipping duplicate detection: {detection_count} objects, confidence: {confidence_scores}")
 
             # Visualize the results on the frame
             annotated_frame = results[0].plot()
